@@ -1,4 +1,5 @@
 import io
+import base64
 import pandas as pd
 import streamlit as st
 from reportlab.lib.pagesizes import inch
@@ -15,10 +16,8 @@ def generate_pdf(df, common_role, name_col, org_col):
     doc = SimpleDocTemplate(
         buffer,
         pagesize=(page_width, page_height),
-        leftMargin=margin,
-        rightMargin=margin,
-        topMargin=margin,
-        bottomMargin=margin
+        leftMargin=margin, rightMargin=margin,
+        topMargin=margin, bottomMargin=margin
     )
     
     styles = getSampleStyleSheet()
@@ -57,11 +56,29 @@ def generate_single_sticker_pdf(name, org, role):
     single_df = pd.DataFrame([{ 'Name': name, 'Org': org }])
     return generate_pdf(single_df, role, 'Name', 'Org')
 
+def display_and_print_pdf(pdf_buffer):
+    """Encodes PDF into an embedded object and injects a direct Javascript system print action."""
+    base64_pdf = base64.b64encode(pdf_buffer.getvalue()).decode('utf-8')
+    
+    # Injects an interactive iframe showing the PDF alongside an instant JavaScript execution trigger
+    # Using window.print() inside the iframe targets the raw document payload directly
+    pdf_display = f"""
+    <div style="text-align:center; margin-top:10px;">
+        <iframe id="pdf-frame" src="data:application/pdf;base64,{base64_pdf}" width="100%" height="250px" style="border:1px solid #ccc;"></iframe>
+        <br/><br/>
+        <button onclick="var frame = document.getElementById('pdf-frame'); frame.contentWindow.focus(); frame.contentWindow.print();" 
+                style="background-color: #FF4B4B; color: white; border: none; padding: 10px 24px; font-size: 16px; border-radius: 4px; cursor: pointer; font-weight: bold;">
+            🖨️ Open System Print Wizard
+        </button>
+    </div>
+    """
+    st.components.v1.html(pdf_display, height=350)
+
 # --- Streamlit UI Setup ---
 st.set_page_config(page_title="Thermal Badge Generator", page_icon="🖨️", layout="centered")
 
 st.title("🖨️ Thermal Sticker Badge Generator")
-st.write("Generate bulk badges via Excel or quickly print a single emergency sticker on-the-spot.")
+st.write("Generate layout batches or on-the-spot individual labels with instant direct browser printing.")
 
 # --- DYNAMIC ROLE MANAGEMENT SECTION ---
 st.subheader("🛠️ Create Custom Roles")
@@ -77,16 +94,12 @@ if new_role:
 
 st.write("---")
 
-# --- SPLIT INTO TWO MODES USING TABS ---
 tab1, tab2 = st.tabs(["📁 Batch Upload (Excel)", "✏️ On-the-Spot Single Print"])
 
 # --- TAB 1: BULK EXCEL UPLOADER ---
 with tab1:
     st.subheader("Upload Excel File")
-    
-    # Dropdown specifically for the batch upload process
     batch_role = st.selectbox("Select Role for this Excel batch:", options=st.session_state.custom_roles, key="batch_role_select")
-    
     uploaded_file = st.file_uploader("Choose your Excel file", type=["xlsx", "xls"])
 
     if uploaded_file is not None:
@@ -99,52 +112,33 @@ with tab1:
             
             if not name_key or not org_key:
                 st.error("❌ Could not match the required columns.")
-                st.write("Detected columns:", list(df.columns))
             else:
-                st.success(f"✅ Columns matched successfully! Applying role: **{batch_role}**")
+                st.success(f"✅ Ready! Applied role: **{batch_role}**")
                 
-                preview_df = pd.DataFrame({
-                    'Name': df[name_key],
-                    'Organisation Name': df[org_key],
-                    'Role': batch_role
-                })
-                st.dataframe(preview_df.head())
-                
-                if st.button("✨ Generate Batch PDF", key="batch_gen"):
+                if st.button("✨ Load Batch Preview & Print Controller", key="batch_gen"):
                     with st.spinner("Processing batch layout..."):
                         pdf_buffer = generate_pdf(df, batch_role, name_key, org_key)
-                    st.balloons()
-                    st.download_button(
-                        label=f"📥 Download Batch PDF ({batch_role})",
-                        data=pdf_buffer,
-                        file_name=f"batch_{batch_role.lower()}_badges.pdf",
-                        mime="application/pdf"
-                    )
+                    
+                    st.write("### Preview & Printer Command Window")
+                    display_and_print_pdf(pdf_buffer)
         except Exception as e:
             st.error(f"An error occurred: {e}")
 
 # --- TAB 2: EMERGENCY SINGLE PRINT ---
 with tab2:
     st.subheader("Create a Single On-Spot Sticker")
-    st.write("Enter details and pick a role directly from the dropdown:")
+    st.write("Enter details and click the print controller below without saving files:")
     
     manual_name = st.text_input("Full Name:")
     manual_org = st.text_input("Organisation Name:")
-    
-    # ENHANCED: Dedicated Role dropdown right inside the single entry tab
     single_role = st.selectbox("Select Role for this person:", options=st.session_state.custom_roles, key="single_role_select")
 
-    if st.button("✨ Prepare Emergency Sticker", key="single_gen"):
+    if st.button("✨ Load On-Spot Print Controller", key="single_gen"):
         if not manual_name:
             st.warning("⚠️ Please enter a Name before generating.")
         else:
             with st.spinner("Formatting single sticker layout..."):
                 single_pdf_buffer = generate_single_sticker_pdf(manual_name, manual_org, single_role)
             
-            st.success(f"✅ Ready! Click below to download and print for {manual_name}.")
-            st.download_button(
-                label=f"📥 Download Single Sticker PDF ({single_role})",
-                data=single_pdf_buffer,
-                file_name=f"single_{manual_name.replace(' ', '_').lower()}_badge.pdf",
-                mime="application/pdf"
-            )
+            st.success(f"✅ Layout generated for {manual_name}!")
+            display_and_print_pdf(single_pdf_buffer)
