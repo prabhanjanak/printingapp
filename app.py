@@ -1,5 +1,5 @@
 import io
-import base64
+import fitz  # PyMuPDF (for rendering PDF pages as sharp images)
 import pandas as pd
 import streamlit as st
 from reportlab.lib.pagesizes import inch
@@ -56,21 +56,27 @@ def generate_single_sticker_pdf(name, org, role):
     single_df = pd.DataFrame([{ 'Name': name, 'Org': org }])
     return generate_pdf(single_df, role, 'Name', 'Org')
 
-def display_and_print_pdf(pdf_buffer):
-    """Encodes PDF into base64 and renders it natively inside st.iframe."""
-    base64_pdf = base64.b64encode(pdf_buffer.getvalue()).decode('utf-8')
-    data_url = f"data:application/pdf;base64,{base64_pdf}"
-    
-    # NEW API: Renders the PDF directly inside the modernized native iframe engine
-    st.iframe(src=data_url, height=250)
-    
-    st.info("💡 To print instantly without downloading, click the printer icon inside the preview box above!")
+def display_pdf_as_image(pdf_buffer):
+    """Converts the first page of the PDF into a PNG image to bypass Chrome iframe block restrictions."""
+    try:
+        # Open the PDF directly from the memory stream
+        pdf_doc = fitz.open(stream=pdf_buffer.getvalue(), filetype="pdf")
+        page = pdf_doc.load_page(0)  # load the first page
+        
+        # Scale up resolution (zoom factor 3x) so it looks crisp on screens
+        pix = page.get_pixmap(matrix=fitz.Matrix(3, 3))
+        image_bytes = pix.tobytes("png")
+        
+        # Display the crisp preview image directly
+        st.image(image_bytes, caption="Live Layout Preview (Page 1)", use_container_width=True)
+    except Exception as e:
+        st.warning(f"Preview image generation skipped: {e}")
 
 # --- Streamlit UI Setup ---
 st.set_page_config(page_title="Thermal Badge Generator", page_icon="🖨️", layout="centered")
 
 st.title("🖨️ Thermal Sticker Badge Generator")
-st.write("Generate layout batches or on-the-spot individual labels with instant direct browser printing.")
+st.write("Generate layout batches or on-the-spot individual labels with crisp live previews.")
 
 # --- DYNAMIC ROLE MANAGEMENT SECTION ---
 st.subheader("🛠️ Create Custom Roles")
@@ -112,7 +118,14 @@ with tab1:
                         pdf_buffer = generate_pdf(df, batch_role, name_key, org_key)
                     
                     st.write("### Preview & Printer Window")
-                    display_and_print_pdf(pdf_buffer)
+                    display_pdf_as_image(pdf_buffer)
+                    
+                    st.download_button(
+                        label="📥 Download & Send to Thermal Printer",
+                        data=pdf_buffer,
+                        file_name=f"batch_{batch_role.lower()}_badges.pdf",
+                        mime="application/pdf"
+                    )
         except Exception as e:
             st.error(f"An error occurred: {e}")
 
@@ -132,5 +145,15 @@ with tab2:
             with st.spinner("Formatting single sticker layout..."):
                 single_pdf_buffer = generate_single_sticker_pdf(manual_name, manual_org, single_role)
             
-            st.success(f"✅ Layout generated for {manual_name}!")
-            display_and_print_pdf(single_pdf_buffer)
+            st.success(f"✅ Layout generated successfully!")
+            
+            # Show the safe image preview
+            display_pdf_as_image(single_pdf_buffer)
+            
+            # Instant layout download/print button
+            st.download_button(
+                label="📥 Download & Send to Thermal Printer",
+                data=single_pdf_buffer,
+                file_name=f"single_{manual_name.replace(' ', '_').lower()}_badge.pdf",
+                mime="application/pdf"
+            )
