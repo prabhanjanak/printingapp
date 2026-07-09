@@ -57,22 +57,14 @@ def generate_single_sticker_pdf(name, org, role):
     return generate_pdf(single_df, role, 'Name', 'Org')
 
 def display_and_print_pdf(pdf_buffer):
-    """Encodes PDF into an embedded object and injects a direct Javascript system print action."""
+    """Encodes PDF into base64 and renders it natively inside st.iframe."""
     base64_pdf = base64.b64encode(pdf_buffer.getvalue()).decode('utf-8')
+    data_url = f"data:application/pdf;base64,{base64_pdf}"
     
-    # Injects an interactive iframe showing the PDF alongside an instant JavaScript execution trigger
-    # Using window.print() inside the iframe targets the raw document payload directly
-    pdf_display = f"""
-    <div style="text-align:center; margin-top:10px;">
-        <iframe id="pdf-frame" src="data:application/pdf;base64,{base64_pdf}" width="100%" height="250px" style="border:1px solid #ccc;"></iframe>
-        <br/><br/>
-        <button onclick="var frame = document.getElementById('pdf-frame'); frame.contentWindow.focus(); frame.contentWindow.print();" 
-                style="background-color: #FF4B4B; color: white; border: none; padding: 10px 24px; font-size: 16px; border-radius: 4px; cursor: pointer; font-weight: bold;">
-            🖨️ Open System Print Wizard
-        </button>
-    </div>
-    """
-    st.components.v1.html(pdf_display, height=350)
+    # NEW API: Renders the PDF directly inside the modernized native iframe engine
+    st.iframe(src=data_url, height=250)
+    
+    st.info("💡 To print instantly without downloading, click the printer icon inside the preview box above!")
 
 # --- Streamlit UI Setup ---
 st.set_page_config(page_title="Thermal Badge Generator", page_icon="🖨️", layout="centered")
@@ -115,11 +107,11 @@ with tab1:
             else:
                 st.success(f"✅ Ready! Applied role: **{batch_role}**")
                 
-                if st.button("✨ Load Batch Preview & Print Controller", key="batch_gen"):
+                if st.button("✨ Load Batch Preview", key="batch_gen"):
                     with st.spinner("Processing batch layout..."):
                         pdf_buffer = generate_pdf(df, batch_role, name_key, org_key)
                     
-                    st.write("### Preview & Printer Command Window")
+                    st.write("### Preview & Printer Window")
                     display_and_print_pdf(pdf_buffer)
         except Exception as e:
             st.error(f"An error occurred: {e}")
@@ -127,13 +119,13 @@ with tab1:
 # --- TAB 2: EMERGENCY SINGLE PRINT ---
 with tab2:
     st.subheader("Create a Single On-Spot Sticker")
-    st.write("Enter details and click the print controller below without saving files:")
+    st.write("Enter details and click the display button below:")
     
     manual_name = st.text_input("Full Name:")
     manual_org = st.text_input("Organisation Name:")
     single_role = st.selectbox("Select Role for this person:", options=st.session_state.custom_roles, key="single_role_select")
 
-    if st.button("✨ Load On-Spot Print Controller", key="single_gen"):
+    if st.button("✨ Load On-Spot Print Preview", key="single_gen"):
         if not manual_name:
             st.warning("⚠️ Please enter a Name before generating.")
         else:
