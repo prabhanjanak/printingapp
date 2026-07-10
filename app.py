@@ -1,4 +1,5 @@
 import io
+import qrcode
 import pandas as pd
 import streamlit as st
 from PIL import Image as PILImage, ImageDraw
@@ -6,24 +7,21 @@ from reportlab.lib.pagesizes import inch
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage
 
-def draw_native_qr_fallback():
-    """Generates a high-contrast fallback vector block pattern safely without external C-extensions."""
-    img = PILImage.new('RGB', (100, 100), color='white')
-    draw = ImageDraw.Draw(img)
-    # Renders a standard static procedural high-contrast mock QR layout target
-    draw.rectangle([10, 10, 40, 40], fill="black")
-    draw.rectangle([60, 10, 90, 40], fill="black")
-    draw.rectangle([10, 60, 40, 90], fill="black")
-    draw.rectangle([25, 25, 30, 30], fill="black")
-    draw.rectangle([75, 75, 85, 85], fill="black")
-    draw.rectangle([50, 50, 65, 65], fill="black")
+def get_pure_qr_buffer(url_data):
+    """Generates a real scannable QR Code as a PNG memory buffer using standard PIL objects."""
+    qr = qrcode.QRCode(version=1, box_size=10, border=1)
+    qr.add_data(str(url_data).strip() if url_data else "https://example.com")
+    qr.make(fitz=True)
+    # Generate using pure software image builder matrix fallback
+    qr_img = qr.make_image(fill_color="black", back_color="white").convert('RGB')
+    
     buffer = io.BytesIO()
-    img.save(buffer, format="PNG")
+    qr_img.save(buffer, format="PNG")
     buffer.seek(0)
     return buffer
 
-def draw_preview_image(name, org, size_option, reg_val="", num_val=""):
-    """Renders a safe software-side canvas preview image bypassing heavy binary components."""
+def draw_preview_image(name, org, size_option, qr_val="", reg_val="", num_val=""):
+    """Renders an accurate software-drawn visual layout preview using Pillow safely."""
     dpi = 300
     width_px = 4 * dpi
     height_px = 2 * dpi if size_option == '4" x 2"' else 1 * dpi
@@ -45,26 +43,33 @@ def draw_preview_image(name, org, size_option, reg_val="", num_val=""):
 
     if size_option == '4" x 2"':
         reg_num = str(reg_val).strip() if reg_val else "SEH-V2020-OSXXXXX"
-        draw.rectangle([width_px//2 - 60, 40, width_px//2 + 60, 160], outline="black", width=2)
-        draw.text((width_px//2, 100), "[ QR ]", fill="black", anchor="mm")
-        draw.text((width_px//2, 220), name, fill="black", anchor="mm")
-        draw.text((width_px//2, 280), reg_num, fill="gray", anchor="mm")
-        draw.text((width_px//2, 340), org, fill="black", anchor="mm")
+        
+        # Overlay real scannable QR image matrix directly into preview panel canvas
+        try:
+            qr_buf = get_pure_qr_buffer(qr_val)
+            qr_pil = PILImage.open(qr_buf).resize((180, 180))
+            img.paste(qr_pil, (width_px//2 - 90, 30))
+        except:
+            draw.rectangle([width_px//2 - 90, 30, width_px//2 + 90, 210], outline="black", width=2)
+            
+        draw.text((width_px//2, 270), name, fill="black", anchor="mm")
+        draw.text((width_px//2, 340), reg_num, fill="gray", anchor="mm")
+        draw.text((width_px//2, 410), org, fill="black", anchor="mm")
         if num_str:
-            draw.text((width_px//2, 400), num_str, fill="black", anchor="mm")
+            draw.text((width_px//2, 480), num_str, fill="black", anchor="mm")
     else:
         draw.text((width_px//2, 70), name, fill="black", anchor="mm")
-        draw.text((width_px//2, 150), org, fill="black", anchor="mm")
+        draw.text((width_px//2, 160), org, fill="black", anchor="mm")
         if num_str:
-            draw.text((width_px//2, 220), num_str, fill="black", anchor="mm")
+            draw.text((width_px//2, 240), num_str, fill="black", anchor="mm")
             
     preview_io = io.BytesIO()
     img.save(preview_io, format='PNG')
     preview_io.seek(0)
     return preview_io
 
-def generate_pdf(df, name_col, org_col, size_option, reg_col=None, num_col=None):
-    """Generates a highly optimized multi-page printable PDF layout."""
+def generate_pdf(df, name_col, org_col, size_option, qr_col=None, reg_col=None, num_col=None):
+    """Generates a highly optimized multi-page printable PDF layout matching exact specs."""
     buffer = io.BytesIO()
     page_width = 4 * inch
     
@@ -114,8 +119,8 @@ def generate_pdf(df, name_col, org_col, size_option, reg_col=None, num_col=None)
                 num_str = num_str.zfill(4)
         
         if size_option == '4" x 2"':
-            # Use safe native generator to bypass segmentation faults entirely
-            qr_buf = draw_native_qr_fallback()
+            qr_url = str(row.get(qr_col, '')).strip() if qr_col else "https://example.com"
+            qr_buf = get_pure_qr_buffer(qr_url)
             story.append(RLImage(qr_buf, width=0.72*inch, height=0.72*inch))
             story.append(Spacer(1, 0.02 * inch))
             
@@ -168,15 +173,16 @@ def generate_pdf(df, name_col, org_col, size_option, reg_col=None, num_col=None)
     buffer.seek(0)
     return buffer
 
-def generate_single_sticker_pdf(name, org, size_option, reg_val="", num_val=""):
-    single_df = pd.DataFrame([{ 'Name': name, 'Org': org, 'Reg': reg_val, 'Num': num_val }])
-    return generate_pdf(single_df, name_col='Name', org_col='Org', size_option=size_option, reg_col='Reg', num_col='Num')
+def generate_single_sticker_pdf(name, org, size_option, qr_val="", reg_val="", num_val=""):
+    """Generates a single layout PDF for manual entry matching exact parameter mapping targets."""
+    single_df = pd.DataFrame([{ 'Name': name, 'Org': org, 'QR': qr_val, 'Reg': reg_val, 'Num': num_val }])
+    return generate_pdf(single_df, name_col='Name', org_col='Org', size_option=size_option, qr_col='QR', reg_col='Reg', num_col='Num')
 
 # --- Streamlit UI Setup ---
 st.set_page_config(page_title="Dynamic Thermal Badge Generator", page_icon="🖨️", layout="centered")
 
 st.title("🖨️ Multi-Size Thermal Sticker Generator")
-st.write("Switch layouts between clean 4x1 tracking labels or complete 4x2 visitor badges.")
+st.write("Switch layouts between clean 4x1 tracking labels or complete 4x2 QR code visitor badges.")
 
 st.subheader("⚙️ Global Layout Settings")
 size_option = st.selectbox('Select Sticker Dimensions:', options=['4" x 1"', '4" x 2"'])
@@ -210,16 +216,19 @@ with tab1:
                 num_select = st.selectbox("Tracking Number Column:", options=num_options, index=default_num_idx)
                 num_key = None if num_select == "-- None --" else num_select
 
-            reg_key = None
+            qr_key, reg_key = None, None
             if size_option == '4" x 2"':
+                auto_qr = next((orig for clean, orig in clean_columns.items() if any(k in clean for k in ['qr', 'url', 'link'])), df.columns[0])
                 auto_reg = next((orig for clean, orig in clean_columns.items() if any(k in clean for k in ['reg', 'serial', 'card id']) or (clean == 'id' and clean != auto_num)), df.columns[0])
+                
+                qr_key = st.selectbox("QR/URL Column:", options=df.columns, index=list(df.columns).index(auto_qr))
                 reg_key = st.selectbox("Registration ID Column:", options=df.columns, index=list(df.columns).index(auto_reg))
 
             st.success("✅ Ready to generate layout processing!")
             
             if st.button("✨ Load Batch Preview & Build Layout", key="batch_gen"):
                 with st.spinner("Processing batch formatting..."):
-                    pdf_buffer = generate_pdf(df, name_key, org_key, size_option, reg_key, num_key)
+                    pdf_buffer = generate_pdf(df, name_key, org_key, size_option, qr_key, reg_key, num_key)
                 
                 st.write("### Preview & Printer Window")
                 first_row = df.iloc[0]
@@ -227,6 +236,7 @@ with tab1:
                     name=first_row.get(name_key, 'Sample Name'),
                     org=first_row.get(org_key, 'Sample Org'),
                     size_option=size_option,
+                    qr_val=first_row.get(qr_key, '') if qr_key else "",
                     reg_val=first_row.get(reg_key, '') if reg_key else "",
                     num_val=first_row.get(num_key, '') if num_key else ""
                 )
@@ -249,8 +259,10 @@ with tab2:
     manual_org = st.text_input("Organisation Name:", value="Tanvi")
     manual_num = st.text_input("4-Digit Tracking Number (Optional):", placeholder="e.g. 1234", value="1223")
     
+    manual_qr = ""
     manual_reg = ""
     if size_option == '4" x 2"':
+        manual_qr = st.text_input("QR Code URL / Content Data:", value="https://example.com")
         manual_reg = st.text_input("Registration ID Number:", value="SEH-V2020-OSXXXXX")
 
     if st.button("✨ Load On-Spot Print Preview", key="single_gen"):
@@ -259,13 +271,13 @@ with tab2:
         else:
             with st.spinner("Formatting single sticker layout..."):
                 single_pdf_buffer = generate_single_sticker_pdf(
-                    manual_name, manual_org, size_option, manual_reg, manual_num
+                    manual_name, manual_org, size_option, manual_qr, manual_reg, manual_num
                 )
             
             st.success(f"✅ Layout generated successfully!")
             
             preview_image_bytes = draw_preview_image(
-                manual_name, manual_org, size_option, manual_reg, manual_num
+                manual_name, manual_org, size_option, manual_qr, manual_reg, manual_num
             )
             st.image(preview_image_bytes, caption="Live Layout Preview (Page 1)", width="stretch")
             
