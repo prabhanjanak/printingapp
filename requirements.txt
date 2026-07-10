@@ -4,3 +4,4 @@ reportlab
 openpyxl
 xlrd
 pymupdf
+qrcode
