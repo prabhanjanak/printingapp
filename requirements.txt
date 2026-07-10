@@ -3,6 +3,4 @@ pandas
 reportlab
 openpyxl
 xlrd
-qrcode
-pdf2image
 pillow
