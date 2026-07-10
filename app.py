@@ -1,13 +1,96 @@
 import io
-import os
 import qrcode
 import pandas as pd
 import streamlit as st
-from PIL import Image as PILImage
-from pdf2image import convert_from_bytes
+from PIL import Image as PILImage, ImageDraw, ImageFont
 from reportlab.lib.pagesizes import inch
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage
+
+def get_fitted_font_size(org_text):
+    """Returns PIL font size according to string length criteria."""
+    org_len = len(org_text)
+    if org_len > 35:
+        return 14
+    elif org_len > 28:
+        return 16
+    elif org_len > 22:
+        return 18
+    elif org_len > 16:
+        return 20
+    else:
+        return 24
+
+def draw_preview_image(name, org, size_option, qr_val="", reg_val="", num_val=""):
+    """
+    Renders a high-resolution PNG layout preview entirely in software memory.
+    Bypasses OS PDF rendering drivers to permanently prevent server segmentation faults.
+    """
+    # 300 DPI scaling conversion factor
+    dpi = 300
+    width_px = 4 * dpi
+    height_px = 2 * dpi if size_option == '4" x 2"' else 1 * dpi
+    
+    # Create white canvas base
+    img = PILImage.new('RGB', (width_px, height_px), color='white')
+    draw = ImageDraw.Draw(img)
+    
+    # Clean string inputs
+    name = str(name).strip()
+    org = str(org).strip()
+    
+    # Format number text
+    num_str = ""
+    if num_val and str(num_val).strip() != "" and str(num_val).lower() != "none":
+        try:
+            num_str = str(int(float(num_val)))
+        except ValueError:
+            num_str = str(num_val).strip()
+        if num_str.isdigit() and len(num_str) < 4:
+            num_str = num_str.zfill(4)
+            
+    # Try loading default system fonts, fallback to standard bitmap font structure
+    try:
+        font_name = ImageFont.load_default()
+        # Note: Headless servers usually lack complex TTF paths, so we use structural spacing
+    except:
+        font_name = ImageFont.load_default()
+
+    if size_option == '4" x 2"':
+        # --- 4x2 QR Layout Rendering Block ---
+        qr_data = str(qr_val).strip() if qr_val else "https://example.com"
+        reg_num = str(reg_val).strip() if reg_val else "SEH-V2020-OSXXXXX"
+        
+        # Draw central structural QR box representation placeholder
+        draw.rectangle([width_px//2 - 90, 40, width_px//2 + 90, 220], outline="black", width=3)
+        draw.text((width_px//2, 130), "[ QR CODE ]", fill="black", anchor="mm")
+        
+        # Name
+        draw.text((width_px//2, 280), name, fill="black", anchor="mm")
+        
+        # Reg ID
+        draw.text((width_px//2, 350), reg_num, fill="darkgray", anchor="mm")
+        
+        # Org
+        draw.text((width_px//2, 420), org, fill="black", anchor="mm")
+        
+        # Number
+        if num_str:
+            draw.text((width_px//2, 490), num_str, fill="black", anchor="mm")
+            
+    else:
+        # --- 4x1 Minimalist Layout Rendering Block ---
+        # Vertical stacking grid calculations
+        draw.text((width_px//2, 70), name, fill="black", anchor="mm")
+        draw.text((width_px//2, 160), org, fill="black", anchor="mm")
+        if num_str:
+            draw.text((width_px//2, 230), num_str, fill="black", anchor="mm")
+            
+    # Buffer conversion stream packaging
+    preview_io = io.BytesIO()
+    img.save(preview_io, format='PNG')
+    preview_io.seek(0)
+    return preview_io
 
 def generate_pdf(df, name_col, org_col, size_option, qr_col=None, reg_col=None, num_col=None):
     """Generates a multi-page PDF optimized for thermal sticker printing (4x1 or 4x2) without roles."""
@@ -19,7 +102,7 @@ def generate_pdf(df, name_col, org_col, size_option, qr_col=None, reg_col=None, 
         margin = 0.08 * inch
     else:
         page_height = 1 * inch
-        margin = 0.06 * inch  # Tightened print margins to maximize available vertical printable area
+        margin = 0.06 * inch
 
     doc = SimpleDocTemplate(
         buffer,
@@ -49,7 +132,6 @@ def generate_pdf(df, name_col, org_col, size_option, qr_col=None, reg_col=None, 
         name = str(row.get(name_col, '')).strip()
         org = str(row.get(org_col, '')).strip()
         
-        # Clean up and extract number text formatting safely
         raw_num = row.get(num_col, '') if num_col else ''
         num_str = ""
         if pd.notna(raw_num) and str(raw_num).strip() != "":
@@ -62,7 +144,6 @@ def generate_pdf(df, name_col, org_col, size_option, qr_col=None, reg_col=None, 
                 num_str = num_str.zfill(4)
         
         if size_option == '4" x 2"':
-            # 1. QR Code Generation
             qr_data = str(row.get(qr_col, '')).strip() if qr_col else "https://example.com"
             if not qr_data or qr_data.lower() == 'nan':
                 qr_data = "N/A"
@@ -79,22 +160,18 @@ def generate_pdf(df, name_col, org_col, size_option, qr_col=None, reg_col=None, 
             story.append(RLImage(qr_buffer, width=0.72*inch, height=0.72*inch))
             story.append(Spacer(1, 0.02 * inch))
             
-            # 2. Name Layout
             story.append(Paragraph(name, style_name))
             story.append(Spacer(1, 0.02 * inch))
             
-            # 3. Registration ID Layout
             reg_num = str(row.get(reg_col, '')).strip() if reg_col else "SEH-V2020-OSXXXXX"
             story.append(Paragraph(reg_num, style_reg))
             story.append(Spacer(1, 0.02 * inch))
             
         else:
-            # Standard 4x1 Layout structure
             story.append(Spacer(1, 0.02 * inch)) 
             story.append(Paragraph(name, style_name))
             story.append(Spacer(1, 0.02 * inch))
             
-        # 4. Advanced Continuous Auto-fitting for Organisation Name
         org_len = len(org)
         if org_len > 35:
             f_size = 6.5
@@ -121,7 +198,6 @@ def generate_pdf(df, name_col, org_col, size_option, qr_col=None, reg_col=None, 
         if org:
             story.append(Paragraph(org, style_org))
             
-        # 5. Dedicated 3rd line for the tracking number (No '#' symbol)
         if num_str:
             story.append(Spacer(1, 0.01 * inch))
             story.append(Paragraph(num_str, style_num))
@@ -138,21 +214,6 @@ def generate_single_sticker_pdf(name, org, size_option, qr_val="", reg_val="", n
     """Generates a single layout PDF for manual entry matching exact parameter mapping targets."""
     single_df = pd.DataFrame([{ 'Name': name, 'Org': org, 'QR': qr_val, 'Reg': reg_val, 'Num': num_val }])
     return generate_pdf(single_df, name_col='Name', org_col='Org', size_option=size_option, qr_col='QR', reg_col='Reg', num_col='Num')
-
-def display_pdf_as_image(pdf_buffer):
-    """Converts the first page of the PDF into an image securely using a headless-safe rendering workflow."""
-    try:
-        # Convert raw PDF bytes directly to an image without utilizing GUI OS frame buffers
-        images = convert_from_bytes(pdf_buffer.getvalue(), first_page=1, last_page=1)
-        if images:
-            img_byte_arr = io.BytesIO()
-            images[0].save(img_byte_arr, format='PNG')
-            img_byte_arr.seek(0)
-            
-            # FIXED: Updated use_container_width=True to the new native API standard width='stretch'
-            st.image(img_byte_arr, caption="Live Layout Preview (Page 1)", width="stretch")
-    except Exception as e:
-        st.warning("Preview generation skipped due to server environment constraints. You can still download and print your PDF safely below!")
 
 # --- Streamlit UI Setup ---
 st.set_page_config(page_title="Dynamic Thermal Badge Generator", page_icon="🖨️", layout="centered")
@@ -209,7 +270,18 @@ with tab1:
                     pdf_buffer = generate_pdf(df, name_key, org_key, size_option, qr_key, reg_key, num_key)
                 
                 st.write("### Preview & Printer Window")
-                display_pdf_as_image(pdf_buffer)
+                
+                # Fetch first row details for clean safety image generation preview
+                first_row = df.iloc[0]
+                preview_image_bytes = draw_preview_image(
+                    name=first_row.get(name_key, 'Sample Name'),
+                    org=first_row.get(org_key, 'Sample Org'),
+                    size_option=size_option,
+                    qr_val=first_row.get(qr_key, '') if qr_key else "",
+                    reg_val=first_row.get(reg_key, '') if reg_key else "",
+                    num_val=first_row.get(num_key, '') if num_key else ""
+                )
+                st.image(preview_image_bytes, caption="Live Layout Preview (Page 1)", width="stretch")
                 
                 st.download_button(
                     label="📥 Download & Send to Thermal Printer",
@@ -225,9 +297,9 @@ with tab2:
     st.subheader("Create a Single On-Spot Sticker")
     st.write("Fill out the specific required data properties below:")
     
-    manual_name = st.text_input("Full Name:")
-    manual_org = st.text_input("Organisation Name:")
-    manual_num = st.text_input("4-Digit Tracking Number (Optional):", placeholder="e.g. 1234")
+    manual_name = st.text_input("Full Name:", value="Test")
+    manual_org = st.text_input("Organisation Name:", value="Tanvi")
+    manual_num = st.text_input("4-Digit Tracking Number (Optional):", placeholder="e.g. 1234", value="1223")
     
     manual_qr = ""
     manual_reg = ""
@@ -245,7 +317,12 @@ with tab2:
                 )
             
             st.success(f"✅ Layout generated successfully!")
-            display_pdf_as_image(single_pdf_buffer)
+            
+            # Display high resolution soft-draw preview securely without drivers
+            preview_image_bytes = draw_preview_image(
+                manual_name, manual_org, size_option, manual_qr, manual_reg, manual_num
+            )
+            st.image(preview_image_bytes, caption="Live Layout Preview (Page 1)", width="stretch")
             
             st.download_button(
                 label="📥 Download & Send to Thermal Printer",
