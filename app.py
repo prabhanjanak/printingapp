@@ -1,11 +1,13 @@
 import io
-import fitz  # PyMuPDF
+import os
 import qrcode
 import pandas as pd
 import streamlit as st
+from PIL import Image as PILImage
+from pdf2image import convert_from_bytes
 from reportlab.lib.pagesizes import inch
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage
 
 def generate_pdf(df, name_col, org_col, size_option, qr_col=None, reg_col=None, num_col=None):
     """Generates a multi-page PDF optimized for thermal sticker printing (4x1 or 4x2) without roles."""
@@ -74,7 +76,7 @@ def generate_pdf(df, name_col, org_col, size_option, qr_col=None, reg_col=None, 
             qr_img.save(qr_buffer, format="PNG")
             qr_buffer.seek(0)
             
-            story.append(Image(qr_buffer, width=0.72*inch, height=0.72*inch))
+            story.append(RLImage(qr_buffer, width=0.72*inch, height=0.72*inch))
             story.append(Spacer(1, 0.02 * inch))
             
             # 2. Name Layout
@@ -138,15 +140,19 @@ def generate_single_sticker_pdf(name, org, size_option, qr_val="", reg_val="", n
     return generate_pdf(single_df, name_col='Name', org_col='Org', size_option=size_option, qr_col='QR', reg_col='Reg', num_col='Num')
 
 def display_pdf_as_image(pdf_buffer):
-    """Converts the first page of the PDF into a PNG image preview."""
+    """Converts the first page of the PDF into an image securely using a headless-safe rendering workflow."""
     try:
-        pdf_doc = fitz.open(stream=pdf_buffer.getvalue(), filetype="pdf")
-        page = pdf_doc.load_page(0)
-        pix = page.get_pixmap(matrix=fitz.Matrix(3, 3))
-        image_bytes = pix.tobytes("png")
-        st.image(image_bytes, caption="Live Layout Preview (Page 1)", use_container_width=True)
+        # Convert raw PDF bytes directly to an image without utilizing GUI OS frame buffers
+        images = convert_from_bytes(pdf_buffer.getvalue(), first_page=1, last_page=1)
+        if images:
+            img_byte_arr = io.BytesIO()
+            images[0].save(img_byte_arr, format='PNG')
+            img_byte_arr.seek(0)
+            
+            # FIXED: Updated use_container_width=True to the new native API standard width='stretch'
+            st.image(img_byte_arr, caption="Live Layout Preview (Page 1)", width="stretch")
     except Exception as e:
-        st.warning(f"Preview image generation skipped: {e}")
+        st.warning("Preview generation skipped due to server environment constraints. You can still download and print your PDF safely below!")
 
 # --- Streamlit UI Setup ---
 st.set_page_config(page_title="Dynamic Thermal Badge Generator", page_icon="🖨️", layout="centered")
