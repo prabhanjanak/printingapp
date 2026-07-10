@@ -1,18 +1,25 @@
 import io
-import fitz  # PyMuPDF (for rendering PDF pages as sharp images)
+import fitz  # PyMuPDF
+import qrcode
 import pandas as pd
 import streamlit as st
 from reportlab.lib.pagesizes import inch
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
 
-def generate_pdf(df, common_role, name_col, org_col):
-    """Generates a multi-page PDF optimized for 4x1 thermal sticker printing from a DataFrame."""
+def generate_pdf(df, common_role, name_col, org_col, size_option, qr_col=None, reg_col=None):
+    """Generates a multi-page PDF optimized for thermal sticker printing (4x1 or 4x2)."""
     buffer = io.BytesIO()
     page_width = 4 * inch
-    page_height = 1 * inch
-    margin = 0.1 * inch
     
+    # Set height based on size option
+    if size_option == '4" x 2"':
+        page_height = 2 * inch
+        margin = 0.08 * inch  # Tighter margins for 4x2 content stack
+    else:
+        page_height = 1 * inch
+        margin = 0.1 * inch
+
     doc = SimpleDocTemplate(
         buffer,
         pagesize=(page_width, page_height),
@@ -21,25 +28,64 @@ def generate_pdf(df, common_role, name_col, org_col):
     )
     
     styles = getSampleStyleSheet()
+    
+    # Text styles
     style_name = ParagraphStyle(
         name='BadgeName', parent=styles['Normal'],
-        fontName='Helvetica-Bold', fontSize=20, leading=22, alignment=1, textColor='#000000'
+        fontName='Helvetica-Bold', fontSize=18, leading=20, alignment=1, textColor='#000000'
+    )
+    style_reg = ParagraphStyle(
+        name='BadgeReg', parent=styles['Normal'],
+        fontName='Helvetica-Bold', fontSize=10, leading=12, alignment=1, textColor='#444444'
     )
     style_sub = ParagraphStyle(
         name='BadgeSub', parent=styles['Normal'],
-        fontName='Helvetica', fontSize=11, leading=13, alignment=1, textColor='#000000'
+        fontName='Helvetica', fontSize=10, leading=12, alignment=1, textColor='#000000'
     )
     
     story = []
+    
     for index, row in df.iterrows():
         name = str(row.get(name_col, '')).strip()
         org = str(row.get(org_col, '')).strip()
         role = str(common_role).strip()
         
-        story.append(Spacer(1, 0.02 * inch)) 
-        story.append(Paragraph(name, style_name))
-        story.append(Spacer(1, 0.01 * inch))
-        
+        if size_option == '4" x 2"':
+            # 1. QR Code Generation
+            qr_data = str(row.get(qr_col, '')).strip() if qr_col else "https://example.com"
+            if not qr_data or qr_data.lower() == 'nan':
+                qr_data = "N/A"
+                
+            qr = qrcode.QRCode(version=1, box_size=10, border=0)
+            qr.add_data(qr_data)
+            qr.make(fitz=True)
+            qr_img = qr.make_image(fill_color="black", back_color="white")
+            
+            # Save QR code graphic into an in-memory stream for ReportLab
+            qr_buffer = io.BytesIO()
+            qr_img.save(qr_buffer, format="PNG")
+            qr_buffer.seek(0)
+            
+            # Add QR code image (0.75 x 0.75 inch structural dimension)
+            story.append(Image(qr_buffer, width=0.75*inch, height=0.75*inch))
+            story.append(Spacer(1, 0.02 * inch))
+            
+            # 2. Name Layout
+            story.append(Paragraph(name, style_name))
+            story.append(Spacer(1, 0.02 * inch))
+            
+            # 3. Registration Number Layout
+            reg_num = str(row.get(reg_col, '')).strip() if reg_col else "SEH-V2020-OSXXXXX"
+            story.append(Paragraph(reg_num, style_reg))
+            story.append(Spacer(1, 0.02 * inch))
+            
+        else:
+            # Standard 4x1 Layout structure
+            story.append(Spacer(1, 0.02 * inch)) 
+            story.append(Paragraph(name, style_name))
+            story.append(Spacer(1, 0.01 * inch))
+            
+        # 4. Subtitles (Organisation & Role) applied to both sizes
         sub_text = f"{org} &bull; {role}" if org and role else f"{org}{role}"
         story.append(Paragraph(sub_text, style_sub))
         
@@ -51,44 +97,41 @@ def generate_pdf(df, common_role, name_col, org_col):
     buffer.seek(0)
     return buffer
 
-def generate_single_sticker_pdf(name, org, role):
-    """Generates a single 4x1 PDF for a manual, on-the-spot entry."""
-    single_df = pd.DataFrame([{ 'Name': name, 'Org': org }])
-    return generate_pdf(single_df, role, 'Name', 'Org')
+def generate_single_sticker_pdf(name, org, role, size_option, qr_val="", reg_val=""):
+    """Generates a single layout PDF for manual entry."""
+    single_df = pd.DataFrame([{ 'Name': name, 'Org': org, 'QR': qr_val, 'Reg': reg_val }])
+    return generate_pdf(single_df, role, 'Name', 'Org', size_option, 'QR', 'Reg')
 
 def display_pdf_as_image(pdf_buffer):
-    """Converts the first page of the PDF into a PNG image to bypass Chrome iframe block restrictions."""
+    """Converts the first page of the PDF into a PNG image preview."""
     try:
-        # Open the PDF directly from the memory stream
         pdf_doc = fitz.open(stream=pdf_buffer.getvalue(), filetype="pdf")
-        page = pdf_doc.load_page(0)  # load the first page
-        
-        # Scale up resolution (zoom factor 3x) so it looks crisp on screens
+        page = pdf_doc.load_page(0)
         pix = page.get_pixmap(matrix=fitz.Matrix(3, 3))
         image_bytes = pix.tobytes("png")
-        
-        # Display the crisp preview image directly
         st.image(image_bytes, caption="Live Layout Preview (Page 1)", use_container_width=True)
     except Exception as e:
         st.warning(f"Preview image generation skipped: {e}")
 
 # --- Streamlit UI Setup ---
-st.set_page_config(page_title="Thermal Badge Generator", page_icon="🖨️", layout="centered")
+st.set_page_config(page_title="Dynamic Thermal Badge Generator", page_icon="🖨️", layout="centered")
 
-st.title("🖨️ Thermal Sticker Badge Generator")
-st.write("Generate layout batches or on-the-spot individual labels with crisp live previews.")
+st.title("🖨️ Multi-Size Thermal Sticker Generator")
+st.write("Switch layouts between 4x1 labels or complete 4x2 QR code visitor badges.")
 
-# --- DYNAMIC ROLE MANAGEMENT SECTION ---
-st.subheader("🛠️ Create Custom Roles")
+# --- MASTER CONFIGURATION CONFIG ---
+st.subheader("⚙️ Global Settings")
+size_option = st.selectbox('Select Sticker Dimensions:', options=['4" x 1"', '4" x 2"'])
+
 if 'custom_roles' not in st.session_state:
     st.session_state.custom_roles = ["Attendee", "Exhibitor", "Crew", "Speaker"]
 
-new_role = st.text_input("Type a new role name and press Enter to save it to your master list:")
+new_role = st.text_input("Type a new role name and press Enter to save to options:")
 if new_role:
     cleaned_role = new_role.strip()
     if cleaned_role and cleaned_role not in st.session_state.custom_roles:
         st.session_state.custom_roles.append(cleaned_role)
-        st.success(f"Added '{cleaned_role}' to your master options!")
+        st.success(f"Added '{cleaned_role}' successfully!")
 
 st.write("---")
 
@@ -97,7 +140,7 @@ tab1, tab2 = st.tabs(["📁 Batch Upload (Excel)", "✏️ On-the-Spot Single Pr
 # --- TAB 1: BULK EXCEL UPLOADER ---
 with tab1:
     st.subheader("Upload Excel File")
-    batch_role = st.selectbox("Select Role for this Excel batch:", options=st.session_state.custom_roles, key="batch_role_select")
+    batch_role = st.selectbox("Select Role for this batch:", options=st.session_state.custom_roles, key="batch_role_select")
     uploaded_file = st.file_uploader("Choose your Excel file", type=["xlsx", "xls"])
 
     if uploaded_file is not None:
@@ -108,14 +151,24 @@ with tab1:
             name_key = next((orig for clean, orig in clean_columns.items() if clean == 'name'), None)
             org_key = next((orig for clean, orig in clean_columns.items() if clean in ['organisation name', 'organization name']), None)
             
+            # Advanced Column Searching for 4x2 Layout dependencies
+            qr_key, reg_key = None, None
+            if size_option == '4" x 2"':
+                qr_key = next((orig for clean, orig in clean_columns.items() if any(k in clean for k in ['qr', 'url', 'link'])), None)
+                reg_key = next((orig for clean, orig in clean_columns.items() if any(k in clean for k in ['reg', 'number', 'id'])), None)
+
+            # Error Handling based on selected size
             if not name_key or not org_key:
-                st.error("❌ Could not match the required columns.")
+                st.error("❌ Missing required 'Name' or 'Organisation Name' columns.")
+            elif size_option == '4" x 2"' and (not qr_key or not reg_key):
+                st.error("❌ For 4\" x 2\" stickers, we couldn't auto-detect your QR/URL column or Registration Number column.")
+                st.write("Detected Columns inside your file:", list(df.columns))
             else:
-                st.success(f"✅ Ready! Applied role: **{batch_role}**")
+                st.success(f"✅ Columns matched successfully for layout size {size_option}!")
                 
-                if st.button("✨ Load Batch Preview", key="batch_gen"):
-                    with st.spinner("Processing batch layout..."):
-                        pdf_buffer = generate_pdf(df, batch_role, name_key, org_key)
+                if st.button("✨ Load Batch Preview & Build Layout", key="batch_gen"):
+                    with st.spinner("Processing batch formatting..."):
+                        pdf_buffer = generate_pdf(df, batch_role, name_key, org_key, size_option, qr_key, reg_key)
                     
                     st.write("### Preview & Printer Window")
                     display_pdf_as_image(pdf_buffer)
@@ -123,7 +176,7 @@ with tab1:
                     st.download_button(
                         label="📥 Download & Send to Thermal Printer",
                         data=pdf_buffer,
-                        file_name=f"batch_{batch_role.lower()}_badges.pdf",
+                        file_name=f"batch_{size_option.replace(' ', '').replace('&quot;', '')}_badges.pdf",
                         mime="application/pdf"
                     )
         except Exception as e:
@@ -132,25 +185,31 @@ with tab1:
 # --- TAB 2: EMERGENCY SINGLE PRINT ---
 with tab2:
     st.subheader("Create a Single On-Spot Sticker")
-    st.write("Enter details and click the display button below:")
+    st.write("Fill out the specific required data properties below:")
     
     manual_name = st.text_input("Full Name:")
     manual_org = st.text_input("Organisation Name:")
     single_role = st.selectbox("Select Role for this person:", options=st.session_state.custom_roles, key="single_role_select")
+    
+    # Render additional dynamic input panels conditionally for 4x2
+    manual_qr = ""
+    manual_reg = ""
+    if size_option == '4" x 2"':
+        manual_qr = st.text_input("QR Code URL / Content Data:", value="https://example.com")
+        manual_reg = st.text_input("Registration ID Number:", value="SEH-V2020-OSXXXXX")
 
     if st.button("✨ Load On-Spot Print Preview", key="single_gen"):
         if not manual_name:
             st.warning("⚠️ Please enter a Name before generating.")
         else:
             with st.spinner("Formatting single sticker layout..."):
-                single_pdf_buffer = generate_single_sticker_pdf(manual_name, manual_org, single_role)
+                single_pdf_buffer = generate_single_sticker_pdf(
+                    manual_name, manual_org, single_role, size_option, manual_qr, manual_reg
+                )
             
             st.success(f"✅ Layout generated successfully!")
-            
-            # Show the safe image preview
             display_pdf_as_image(single_pdf_buffer)
             
-            # Instant layout download/print button
             st.download_button(
                 label="📥 Download & Send to Thermal Printer",
                 data=single_pdf_buffer,
