@@ -17,7 +17,7 @@ def generate_pdf(df, name_col, org_col, size_option, qr_col=None, reg_col=None, 
         margin = 0.08 * inch
     else:
         page_height = 1 * inch
-        margin = 0.08 * inch
+        margin = 0.06 * inch  # Tightened print margins to maximize available vertical printable area
 
     doc = SimpleDocTemplate(
         buffer,
@@ -35,6 +35,10 @@ def generate_pdf(df, name_col, org_col, size_option, qr_col=None, reg_col=None, 
     style_reg = ParagraphStyle(
         name='BadgeReg', parent=styles['Normal'],
         fontName='Helvetica-Bold', fontSize=10, leading=12, alignment=1, textColor='#444444'
+    )
+    style_num = ParagraphStyle(
+        name='BadgeNum', parent=styles['Normal'],
+        fontName='Helvetica-Bold', fontSize=10, leading=11, alignment=1, textColor='#000000'
     )
     
     story = []
@@ -86,39 +90,39 @@ def generate_pdf(df, name_col, org_col, size_option, qr_col=None, reg_col=None, 
             # Standard 4x1 Layout structure
             story.append(Spacer(1, 0.02 * inch)) 
             story.append(Paragraph(name, style_name))
-            story.append(Spacer(1, 0.04 * inch))
+            story.append(Spacer(1, 0.02 * inch))
             
-        # 4. Smart Combining & Sizing for Organization Name + Number line
-        # Combine them on the same line to save height space
-        if org and num_str:
-            combined_text = f"{org} &bull; #{num_str}"
-        elif org:
-            combined_text = org
-        elif num_str:
-            combined_text = f"#{num_str}"
+        # 4. Advanced Continuous Auto-fitting for Organisation Name
+        org_len = len(org)
+        if org_len > 35:
+            f_size = 6.5
+            f_leading = 7.5
+        elif org_len > 28:
+            f_size = 7.5
+            f_leading = 8.5
+        elif org_len > 22:
+            f_size = 8.5
+            f_leading = 9.5
+        elif org_len > 16:
+            f_size = 9.5
+            f_leading = 11
         else:
-            combined_text = ""
+            f_size = 11
+            f_leading = 13
             
-        text_length = len(combined_text)
-        if text_length > 30:
-            current_font_size = 8
-            current_leading = 9
-        elif text_length > 20:
-            current_font_size = 9
-            current_leading = 11
-        else:
-            current_font_size = 11
-            current_leading = 13
-            
-        style_combined = ParagraphStyle(
-            name=f'BadgeCombined_{index}', parent=styles['Normal'],
-            fontName='Helvetica-Bold' if num_str and not org else 'Helvetica', 
-            fontSize=current_font_size, leading=current_leading, 
+        style_org = ParagraphStyle(
+            name=f'BadgeOrg_{index}', parent=styles['Normal'],
+            fontName='Helvetica', fontSize=f_size, leading=f_leading, 
             alignment=1, textColor='#000000'
         )
         
-        if combined_text:
-            story.append(Paragraph(combined_text, style_combined))
+        if org:
+            story.append(Paragraph(org, style_org))
+            
+        # 5. Dedicated 3rd line for the tracking number (No '#' symbol)
+        if num_str:
+            story.append(Spacer(1, 0.01 * inch))
+            story.append(Paragraph(num_str, style_num))
         
         if index < len(df) - 1:
             from reportlab.platypus import PageBreak
