@@ -7,15 +7,14 @@ from reportlab.lib.pagesizes import inch
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
 
-def generate_pdf(df, common_role, name_col, org_col, size_option, qr_col=None, reg_col=None):
+def generate_pdf(df, common_role, name_col, org_col, size_option, qr_col=None, reg_col=None, num_col=None):
     """Generates a multi-page PDF optimized for thermal sticker printing (4x1 or 4x2)."""
     buffer = io.BytesIO()
     page_width = 4 * inch
     
-    # Set height based on size option
     if size_option == '4" x 2"':
         page_height = 2 * inch
-        margin = 0.08 * inch  # Tighter margins for 4x2 content stack
+        margin = 0.08 * inch
     else:
         page_height = 1 * inch
         margin = 0.1 * inch
@@ -29,7 +28,6 @@ def generate_pdf(df, common_role, name_col, org_col, size_option, qr_col=None, r
     
     styles = getSampleStyleSheet()
     
-    # Text styles
     style_name = ParagraphStyle(
         name='BadgeName', parent=styles['Normal'],
         fontName='Helvetica-Bold', fontSize=18, leading=20, alignment=1, textColor='#000000'
@@ -50,6 +48,16 @@ def generate_pdf(df, common_role, name_col, org_col, size_option, qr_col=None, r
         org = str(row.get(org_col, '')).strip()
         role = str(common_role).strip()
         
+        # Format the 4-digit number cleanly if it exists
+        raw_num = row.get(num_col, '') if num_col else ''
+        num_str = ""
+        if pd.notna(raw_num) and str(raw_num).strip() != "":
+            # Strips decimal points if pandas reads it as a float (e.g., 1234.0 -> 1234)
+            num_str = str(int(float(raw_num))) if str(raw_num).replace('.','',1).isdigit() else str(raw_num).strip()
+            # Left-pad with zeros if it's shorter than 4 digits (e.g., 42 -> 0042)
+            if num_str.isdigit() and len(num_str) < 4:
+                num_str = num_str.zfill(4)
+        
         if size_option == '4" x 2"':
             # 1. QR Code Generation
             qr_data = str(row.get(qr_col, '')).strip() if qr_col else "https://example.com"
@@ -61,12 +69,10 @@ def generate_pdf(df, common_role, name_col, org_col, size_option, qr_col=None, r
             qr.make(fitz=True)
             qr_img = qr.make_image(fill_color="black", back_color="white")
             
-            # Save QR code graphic into an in-memory stream for ReportLab
             qr_buffer = io.BytesIO()
             qr_img.save(qr_buffer, format="PNG")
             qr_buffer.seek(0)
             
-            # Add QR code image (0.75 x 0.75 inch structural dimension)
             story.append(Image(qr_buffer, width=0.75*inch, height=0.75*inch))
             story.append(Spacer(1, 0.02 * inch))
             
@@ -74,7 +80,7 @@ def generate_pdf(df, common_role, name_col, org_col, size_option, qr_col=None, r
             story.append(Paragraph(name, style_name))
             story.append(Spacer(1, 0.02 * inch))
             
-            # 3. Registration Number Layout
+            # 3. Registration ID Layout
             reg_num = str(row.get(reg_col, '')).strip() if reg_col else "SEH-V2020-OSXXXXX"
             story.append(Paragraph(reg_num, style_reg))
             story.append(Spacer(1, 0.02 * inch))
@@ -85,8 +91,15 @@ def generate_pdf(df, common_role, name_col, org_col, size_option, qr_col=None, r
             story.append(Paragraph(name, style_name))
             story.append(Spacer(1, 0.01 * inch))
             
-        # 4. Subtitles (Organisation & Role) applied to both sizes
-        sub_text = f"{org} &bull; {role}" if org and role else f"{org}{role}"
+        # 4. Subtitles (Organisation, Role & 4-Digit Badge Number)
+        # Formats cleanly as: Company Name • Crew • #1234
+        sub_elements = [org, role] if org and role else [org + role]
+        sub_elements = [x for x in sub_elements if x] # remove blanks
+        
+        if num_str:
+            sub_elements.append(f"#{num_str}")
+            
+        sub_text = " &bull; ".join(sub_elements)
         story.append(Paragraph(sub_text, style_sub))
         
         if index < len(df) - 1:
@@ -97,10 +110,10 @@ def generate_pdf(df, common_role, name_col, org_col, size_option, qr_col=None, r
     buffer.seek(0)
     return buffer
 
-def generate_single_sticker_pdf(name, org, role, size_option, qr_val="", reg_val=""):
+def generate_single_sticker_pdf(name, org, role, size_option, qr_val="", reg_val="", num_val=""):
     """Generates a single layout PDF for manual entry."""
-    single_df = pd.DataFrame([{ 'Name': name, 'Org': org, 'QR': qr_val, 'Reg': reg_val }])
-    return generate_pdf(single_df, role, 'Name', 'Org', size_option, 'QR', 'Reg')
+    single_df = pd.DataFrame([{ 'Name': name, 'Org': org, 'QR': qr_val, 'Reg': reg_val, 'Num': num_val }])
+    return generate_pdf(single_df, role, 'Name', 'Org', size_option, 'QR', 'Reg', 'Num')
 
 def display_pdf_as_image(pdf_buffer):
     """Converts the first page of the PDF into a PNG image preview."""
@@ -119,7 +132,7 @@ st.set_page_config(page_title="Dynamic Thermal Badge Generator", page_icon="🖨
 st.title("🖨️ Multi-Size Thermal Sticker Generator")
 st.write("Switch layouts between 4x1 labels or complete 4x2 QR code visitor badges.")
 
-# --- MASTER CONFIGURATION CONFIG ---
+# --- MASTER CONFIGURATION ---
 st.subheader("⚙️ Global Settings")
 size_option = st.selectbox('Select Sticker Dimensions:', options=['4" x 1"', '4" x 2"'])
 
@@ -151,24 +164,26 @@ with tab1:
             name_key = next((orig for clean, orig in clean_columns.items() if clean == 'name'), None)
             org_key = next((orig for clean, orig in clean_columns.items() if clean in ['organisation name', 'organization name']), None)
             
-            # Advanced Column Searching for 4x2 Layout dependencies
+            # Look for the number column automatically
+            num_key = next((orig for clean, orig in clean_columns.items() if any(k in clean for k in ['number', 'digit', 'code', 'sl', 'id'] if k != 'organization name')), None)
+            
             qr_key, reg_key = None, None
             if size_option == '4" x 2"':
                 qr_key = next((orig for clean, orig in clean_columns.items() if any(k in clean for k in ['qr', 'url', 'link'])), None)
-                reg_key = next((orig for clean, orig in clean_columns.items() if any(k in clean for k in ['reg', 'number', 'id'])), None)
+                # Ensure reg_key doesn't accidentally grab the short 4-digit column if another ID field exists
+                reg_key = next((orig for clean, orig in clean_columns.items() if any(k in clean for k in ['reg', 'serial', 'card id']) or (clean == 'id' and clean != num_key)), None)
 
-            # Error Handling based on selected size
             if not name_key or not org_key:
                 st.error("❌ Missing required 'Name' or 'Organisation Name' columns.")
             elif size_option == '4" x 2"' and (not qr_key or not reg_key):
-                st.error("❌ For 4\" x 2\" stickers, we couldn't auto-detect your QR/URL column or Registration Number column.")
+                st.error("❌ For 4\" x 2\" stickers, we couldn't auto-detect your QR/URL column or Registration ID column.")
                 st.write("Detected Columns inside your file:", list(df.columns))
             else:
                 st.success(f"✅ Columns matched successfully for layout size {size_option}!")
                 
                 if st.button("✨ Load Batch Preview & Build Layout", key="batch_gen"):
                     with st.spinner("Processing batch formatting..."):
-                        pdf_buffer = generate_pdf(df, batch_role, name_key, org_key, size_option, qr_key, reg_key)
+                        pdf_buffer = generate_pdf(df, batch_role, name_key, org_key, size_option, qr_key, reg_key, num_key)
                     
                     st.write("### Preview & Printer Window")
                     display_pdf_as_image(pdf_buffer)
@@ -191,7 +206,9 @@ with tab2:
     manual_org = st.text_input("Organisation Name:")
     single_role = st.selectbox("Select Role for this person:", options=st.session_state.custom_roles, key="single_role_select")
     
-    # Render additional dynamic input panels conditionally for 4x2
+    # 4-Digit Number field added to the manual entry UI
+    manual_num = st.text_input("4-Digit Tracking Number (Optional):", placeholder="e.g. 1234")
+    
     manual_qr = ""
     manual_reg = ""
     if size_option == '4" x 2"':
@@ -204,7 +221,7 @@ with tab2:
         else:
             with st.spinner("Formatting single sticker layout..."):
                 single_pdf_buffer = generate_single_sticker_pdf(
-                    manual_name, manual_org, single_role, size_option, manual_qr, manual_reg
+                    manual_name, manual_org, single_role, size_option, manual_qr, manual_reg, manual_num
                 )
             
             st.success(f"✅ Layout generated successfully!")
