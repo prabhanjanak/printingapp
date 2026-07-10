@@ -17,7 +17,7 @@ def generate_pdf(df, name_col, org_col, size_option, qr_col=None, reg_col=None, 
         margin = 0.08 * inch
     else:
         page_height = 1 * inch
-        margin = 0.1 * inch
+        margin = 0.08 * inch  # Optimized margin padding to fit 3 full lines easily
 
     doc = SimpleDocTemplate(
         buffer,
@@ -38,7 +38,7 @@ def generate_pdf(df, name_col, org_col, size_option, qr_col=None, reg_col=None, 
     )
     style_num = ParagraphStyle(
         name='BadgeNum', parent=styles['Normal'],
-        fontName='Helvetica-Bold', fontSize=10, leading=12, alignment=1, textColor='#555555'
+        fontName='Helvetica-Bold', fontSize=10, leading=12, alignment=1, textColor='#000000'
     )
     
     story = []
@@ -47,11 +47,16 @@ def generate_pdf(df, name_col, org_col, size_option, qr_col=None, reg_col=None, 
         name = str(row.get(name_col, '')).strip()
         org = str(row.get(org_col, '')).strip()
         
-        # Format the 4-digit number cleanly if it exists
-        raw_num = row.get(num_col, '') if num_col else ''
+        # Clean up and extract number text formatting safely
+        raw_num = row.get(num_col, '')
         num_str = ""
         if pd.notna(raw_num) and str(raw_num).strip() != "":
-            num_str = str(int(float(raw_num))) if str(raw_num).replace('.','',1).isdigit() else str(raw_num).strip()
+            try:
+                num_str = str(int(float(raw_num)))
+            except ValueError:
+                num_str = str(raw_num).strip()
+            
+            # Left-pad with zeros if it's shorter than 4 digits (e.g., 42 -> 0042)
             if num_str.isdigit() and len(num_str) < 4:
                 num_str = num_str.zfill(4)
         
@@ -89,7 +94,6 @@ def generate_pdf(df, name_col, org_col, size_option, qr_col=None, reg_col=None, 
             story.append(Spacer(1, 0.02 * inch))
             
         # 4. Smart Sizing for Organization Name
-        # Dynamically shrink font size if text is long and lengthy
         org_length = len(org)
         if org_length > 25:
             current_font_size = 8
@@ -124,7 +128,8 @@ def generate_pdf(df, name_col, org_col, size_option, qr_col=None, reg_col=None, 
     return buffer
 
 def generate_single_sticker_pdf(name, org, size_option, qr_val="", reg_val="", num_val=""):
-    """Generates a single layout PDF for manual entry."""
+    """Generates a single layout PDF for manual entry matching exact parameter mapping targets."""
+    # CHANGED: Explicitly pass column headers matching string keys to keep data streams synced
     single_df = pd.DataFrame([{ 'Name': name, 'Org': org, 'QR': qr_val, 'Reg': reg_val, 'Num': num_val }])
     return generate_pdf(single_df, 'Name', 'Org', size_option, 'QR', 'Reg', 'Num')
 
@@ -161,38 +166,47 @@ with tab1:
     if uploaded_file is not None:
         try:
             df = pd.read_excel(uploaded_file)
+            st.info("🔍 Review or select your column mapping assignments below:")
+            
             clean_columns = {str(col).strip().lower(): col for col in df.columns}
             
-            name_key = next((orig for clean, orig in clean_columns.items() if clean == 'name'), None)
-            org_key = next((orig for clean, orig in clean_columns.items() if clean in ['organisation name', 'organization name']), None)
-            num_key = next((orig for clean, orig in clean_columns.items() if any(k in clean for k in ['number', 'digit', 'code', 'sl', 'id'] if k != 'organization name')), None)
+            auto_name = next((orig for clean, orig in clean_columns.items() if clean == 'name'), df.columns[0])
+            auto_org = next((orig for clean, orig in clean_columns.items() if clean in ['organisation name', 'organization name', 'org name']), df.columns[min(1, len(df.columns)-1)])
+            auto_num = next((orig for clean, orig in clean_columns.items() if any(k in clean for k in ['number', 'digit', 'code', 'sl', 'id'] if k != 'organization name')), None)
             
+            col1, col2 = st.columns(2)
+            with col1:
+                name_key = st.selectbox("Name Column:", options=df.columns, index=list(df.columns).index(auto_name))
+                org_key = st.selectbox("Organisation Column:", options=df.columns, index=list(df.columns).index(auto_org))
+            with col2:
+                num_options = ["-- None --"] + list(df.columns)
+                default_num_idx = num_options.index(auto_num) if auto_num in num_options else 0
+                num_select = st.selectbox("Tracking Number Column:", options=num_options, index=default_num_idx)
+                num_key = None if num_select == "-- None --" else num_select
+
             qr_key, reg_key = None, None
             if size_option == '4" x 2"':
-                qr_key = next((orig for clean, orig in clean_columns.items() if any(k in clean for k in ['qr', 'url', 'link'])), None)
-                reg_key = next((orig for clean, orig in clean_columns.items() if any(k in clean for k in ['reg', 'serial', 'card id']) or (clean == 'id' and clean != num_key)), None)
-
-            if not name_key or not org_key:
-                st.error("❌ Missing required 'Name' or 'Organisation Name' columns.")
-            elif size_option == '4" x 2"' and (not qr_key or not reg_key):
-                st.error("❌ For 4\" x 2\" stickers, we couldn't auto-detect your QR/URL column or Registration ID column.")
-                st.write("Detected Columns inside your file:", list(df.columns))
-            else:
-                st.success(f"✅ Columns matched successfully for layout size {size_option}!")
+                auto_qr = next((orig for clean, orig in clean_columns.items() if any(k in clean for k in ['qr', 'url', 'link'])), df.columns[0])
+                auto_reg = next((orig for clean, orig in clean_columns.items() if any(k in clean for k in ['reg', 'serial', 'card id']) or (clean == 'id' and clean != auto_num)), df.columns[0])
                 
-                if st.button("✨ Load Batch Preview & Build Layout", key="batch_gen"):
-                    with st.spinner("Processing batch formatting..."):
-                        pdf_buffer = generate_pdf(df, name_key, org_key, size_option, qr_key, reg_key, num_key)
-                    
-                    st.write("### Preview & Printer Window")
-                    display_pdf_as_image(pdf_buffer)
-                    
-                    st.download_button(
-                        label="📥 Download & Send to Thermal Printer",
-                        data=pdf_buffer,
-                        file_name=f"batch_{size_option.replace(' ', '').replace('&quot;', '')}_badges.pdf",
-                        mime="application/pdf"
-                    )
+                qr_key = st.selectbox("QR/URL Column:", options=df.columns, index=list(df.columns).index(auto_qr))
+                reg_key = st.selectbox("Registration ID Column:", options=df.columns, index=list(df.columns).index(auto_reg))
+
+            st.success("✅ Ready to generate layout processing!")
+            
+            if st.button("✨ Load Batch Preview & Build Layout", key="batch_gen"):
+                with st.spinner("Processing batch formatting..."):
+                    pdf_buffer = generate_pdf(df, name_key, org_key, size_option, qr_key, reg_key, num_key)
+                
+                st.write("### Preview & Printer Window")
+                display_pdf_as_image(pdf_buffer)
+                
+                st.download_button(
+                    label="📥 Download & Send to Thermal Printer",
+                    data=pdf_buffer,
+                    file_name=f"batch_{size_option.replace(' ', '').replace('&quot;', '')}_badges.pdf",
+                    mime="application/pdf"
+                )
         except Exception as e:
             st.error(f"An error occurred: {e}")
 
