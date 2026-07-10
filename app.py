@@ -17,7 +17,7 @@ def generate_pdf(df, name_col, org_col, size_option, qr_col=None, reg_col=None, 
         margin = 0.08 * inch
     else:
         page_height = 1 * inch
-        margin = 0.08 * inch  # Optimized margin padding to fit 3 full lines easily
+        margin = 0.08 * inch
 
     doc = SimpleDocTemplate(
         buffer,
@@ -36,10 +36,6 @@ def generate_pdf(df, name_col, org_col, size_option, qr_col=None, reg_col=None, 
         name='BadgeReg', parent=styles['Normal'],
         fontName='Helvetica-Bold', fontSize=10, leading=12, alignment=1, textColor='#444444'
     )
-    style_num = ParagraphStyle(
-        name='BadgeNum', parent=styles['Normal'],
-        fontName='Helvetica-Bold', fontSize=10, leading=12, alignment=1, textColor='#000000'
-    )
     
     story = []
     
@@ -48,7 +44,7 @@ def generate_pdf(df, name_col, org_col, size_option, qr_col=None, reg_col=None, 
         org = str(row.get(org_col, '')).strip()
         
         # Clean up and extract number text formatting safely
-        raw_num = row.get(num_col, '')
+        raw_num = row.get(num_col, '') if num_col else ''
         num_str = ""
         if pd.notna(raw_num) and str(raw_num).strip() != "":
             try:
@@ -56,7 +52,6 @@ def generate_pdf(df, name_col, org_col, size_option, qr_col=None, reg_col=None, 
             except ValueError:
                 num_str = str(raw_num).strip()
             
-            # Left-pad with zeros if it's shorter than 4 digits (e.g., 42 -> 0042)
             if num_str.isdigit() and len(num_str) < 4:
                 num_str = num_str.zfill(4)
         
@@ -91,33 +86,39 @@ def generate_pdf(df, name_col, org_col, size_option, qr_col=None, reg_col=None, 
             # Standard 4x1 Layout structure
             story.append(Spacer(1, 0.02 * inch)) 
             story.append(Paragraph(name, style_name))
-            story.append(Spacer(1, 0.02 * inch))
+            story.append(Spacer(1, 0.04 * inch))
             
-        # 4. Smart Sizing for Organization Name
-        org_length = len(org)
-        if org_length > 25:
+        # 4. Smart Combining & Sizing for Organization Name + Number line
+        # Combine them on the same line to save height space
+        if org and num_str:
+            combined_text = f"{org} &bull; #{num_str}"
+        elif org:
+            combined_text = org
+        elif num_str:
+            combined_text = f"#{num_str}"
+        else:
+            combined_text = ""
+            
+        text_length = len(combined_text)
+        if text_length > 30:
             current_font_size = 8
             current_leading = 9
-        elif org_length > 18:
+        elif text_length > 20:
             current_font_size = 9
             current_leading = 11
         else:
             current_font_size = 11
             current_leading = 13
             
-        style_org = ParagraphStyle(
-            name=f'BadgeOrg_{index}', parent=styles['Normal'],
-            fontName='Helvetica', fontSize=current_font_size, leading=current_leading, 
+        style_combined = ParagraphStyle(
+            name=f'BadgeCombined_{index}', parent=styles['Normal'],
+            fontName='Helvetica-Bold' if num_str and not org else 'Helvetica', 
+            fontSize=current_font_size, leading=current_leading, 
             alignment=1, textColor='#000000'
         )
         
-        if org:
-            story.append(Paragraph(org, style_org))
-            
-        # 5. Dedicated line for the tracking number
-        if num_str:
-            story.append(Spacer(1, 0.01 * inch))
-            story.append(Paragraph(f"#{num_str}", style_num))
+        if combined_text:
+            story.append(Paragraph(combined_text, style_combined))
         
         if index < len(df) - 1:
             from reportlab.platypus import PageBreak
@@ -129,9 +130,8 @@ def generate_pdf(df, name_col, org_col, size_option, qr_col=None, reg_col=None, 
 
 def generate_single_sticker_pdf(name, org, size_option, qr_val="", reg_val="", num_val=""):
     """Generates a single layout PDF for manual entry matching exact parameter mapping targets."""
-    # CHANGED: Explicitly pass column headers matching string keys to keep data streams synced
     single_df = pd.DataFrame([{ 'Name': name, 'Org': org, 'QR': qr_val, 'Reg': reg_val, 'Num': num_val }])
-    return generate_pdf(single_df, 'Name', 'Org', size_option, 'QR', 'Reg', 'Num')
+    return generate_pdf(single_df, name_col='Name', org_col='Org', size_option=size_option, qr_col='QR', reg_col='Reg', num_col='Num')
 
 def display_pdf_as_image(pdf_buffer):
     """Converts the first page of the PDF into a PNG image preview."""
