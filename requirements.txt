@@ -3,5 +3,6 @@ pandas
 reportlab
 openpyxl
 xlrd
-pymupdf
 qrcode
+pdf2image
+pillow
